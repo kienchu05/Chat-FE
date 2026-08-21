@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   Alert,
@@ -14,40 +13,46 @@ import {
 } from 'react-native';
 import axiosClient from '../Api/services/axiosClient';
 
+import { router } from '../../.expo/types/router';
 export default function LoginScreen({ navigation }: any) {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Thông báo', 'Vui lòng nhập đầy đủ email và mật khẩu!');
+    Alert.alert('Thông báo', 'Đang xử lý đăng nhập...');
+    console.log("1. Đã bấm nút đăng nhập với:", username, password);
+
+    if (!username || !password) {
+      console.log("2. Bị kẹt ở điều kiện: Thiếu tài khoản hoặc mật khẩu");
+      Alert.alert('Thông báo', 'Vui lòng nhập đầy đủ tài khoản và mật khẩu!');
       return;
     }
 
     try {
       setLoading(true);
-      // Gọi API đăng nhập tới Spring Boot
+      console.log("3. Đang gọi API tới Spring Boot...");
+      
       const response = await axiosClient.post('/api/v1/auth/login', {
-        email,
+        username,
         password,
       });
 
-      const token = response.data.data.accessToken;
-      console.log('Token nhận được từ API:', token);
+      console.log("4. API trả về thành công:", response.data);
+
+      const token = response.data.accessToken;
 
       if (token) {
-        // Lưu token vào bộ nhớ thiết bị
+        console.log("5. Đã tìm thấy token, chuẩn bị lưu và chuyển trang");
         await AsyncStorage.setItem('accessToken', token);
         Alert.alert('Thành công', 'Đăng nhập thành công!');
-        
-        // Chuyển hướng sang màn hình Chat (Giả sử bạn đặt tên màn hình là 'Chat')
-        router.replace('/home');
+        router.replace('/chat'); 
       } else {
-        Alert.alert('Lỗi', 'Không nhận được token từ hệ thống.');
+        console.log("6. Lỗi: Không tìm thấy trường accessToken trong response");
+        Alert.alert('Lỗi', 'Không nhận được accessToken từ hệ thống.');
       }
     } catch (error: any) {
-      console.error('Lỗi đăng nhập:', error);
+      console.log("7. Bắt được lỗi trong catch:", error);
       Alert.alert('Đăng nhập thất bại', error.response?.data?.message || 'Sai tài khoản hoặc mật khẩu');
     } finally {
       setLoading(false);
@@ -77,8 +82,8 @@ export default function LoginScreen({ navigation }: any) {
             style={styles.input}
             placeholder="Tên tài khoản hoặc Email"
             placeholderTextColor="#888"
-            value={email}
-            onChangeText={setEmail}
+            value={username}
+            onChangeText={setUsername}
             autoCapitalize="none"
           />
 
@@ -105,9 +110,9 @@ export default function LoginScreen({ navigation }: any) {
         {/* Phần PHẦN ĐĂNG KÝ (Chuyển hướng) */}
         <View style={styles.registerContainer}>
           <Text style={styles.registerText}>Bạn chưa có tài khoản? </Text>
-          <TouchableOpacity onPress={() => router.push('/register')}>
+          <TouchableOpacity onPress={() => navigation.navigate('Register')}>
             <Text style={styles.registerLink}>Đăng ký ngay</Text>
-        </TouchableOpacity>
+          </TouchableOpacity>
         </View>
 
       </ScrollView>
