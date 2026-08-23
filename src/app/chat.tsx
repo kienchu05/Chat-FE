@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Client } from '@stomp/stompjs';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
@@ -16,7 +17,8 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import axiosClient from '../Api/services/axiosClient'; // Đảm bảo đường dẫn này đúng
+import 'text-encoding';
+import axiosClient from '../Api/services/axiosClient'; // Đảm bảo đường dẫn này đúng với dự án của bạn
 
 // --- ĐỊNH NGHĨA TYPE TỪ SPRING BOOT ---
 interface MessageMediaResponse {
@@ -53,9 +55,11 @@ export default function ChatScreen() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
 
+  // State cho WebSocket (STOMP)
+  const [stompClient, setStompClient] = useState<Client | null>(null);
+
   // --- KHỞI TẠO DỮ LIỆU ---
   useEffect(() => {
-    // Lấy ID của chính mình từ bộ nhớ để phân biệt tin nhắn gửi/nhận
     const getMyId = async () => {
       try {
         const id = await AsyncStorage.getItem('myUserId');
@@ -64,18 +68,88 @@ export default function ChatScreen() {
         console.error('Lỗi lấy myUserId:', error);
       }
     };
-
     getMyId();
   }, []);
 
+  // --- THIẾT LẬP WEBSOCKET (STOMP) ---
+  useEffect(() => {
+    let client: Client | null = null; 
+
+    const connectWebSocket = async () => {
+      try {
+        const token = await AsyncStorage.getItem('accessToken');
+        if (!token) {
+          console.error("Không tìm thấy token để kết nối WebSocket!");
+          return;
+        }
+
+        client = new Client({
+          brokerURL: 'ws://10.0.2.2:8080/ws', 
+          connectHeaders: {
+            Authorization: `Bearer ${token}`, 
+          },
+          forceBinaryWSFrames: true,
+          appendMissingNULLonIncoming: true,
+          debug: (str) => console.log('STOMP: ' + str),
+          reconnectDelay: 5000,
+          heartbeatIncoming: 4000,
+          heartbeatOutgoing: 4000,
+        });
+
+        client.onConnect = (frame) => {
+          console.log('Đã kết nối WebSocket thành công!', frame);
+          
+          client!.subscribe('/user/queue/messages', (messageOutput) => {
+            if (messageOutput.body) {
+              const newMessage: ChatMessageResponse = JSON.parse(messageOutput.body);
+              
+              if (newMessage.conversationId === conversationId) {
+                setMessages((prevMessages) => [newMessage, ...prevMessages]);
+              }
+            }
+          });
+        };
+
+        client.onStompError = (frame) => {
+          console.error('Lỗi STOMP Server: ' + frame.headers['message']);
+        };
+
+        client.onWebSocketError = (error) => {
+          console.error('Lỗi kết nối mạng WebSocket:', error);
+        };
+
+        client.activate();
+        setStompClient(client);
+
+      } catch (error) {
+        console.error("Lỗi khởi tạo STOMP Client:", error);
+      }
+    };
+
+    if (conversationId) {
+      connectWebSocket();
+    }
+
+    return () => {
+      if (client && client.active) {
+        client.deactivate();
+        console.log('Đã ngắt kết nối WebSocket.');
+      }
+    };
+  }, [conversationId]);
+
+  // --- TẢI TIN NHẮN VÀ ĐÁNH DẤU ĐÃ ĐỌC ---
   useEffect(() => {
     if (conversationId) {
-      // Khi có ID phòng chat, gọi API lấy trang 1
       fetchMessages(1);
+
+      // Gọi API đánh dấu đã đọc khi người dùng mở phòng chat này
+      axiosClient.put(`/api/v1/conversations/${conversationId}/read`)
+        .catch(error => console.log('Lỗi đánh dấu đã đọc:', error));
     }
   }, [conversationId]);
 
-  // --- LOGIC GỌI API ---
+  // --- LOGIC GỌI API LỊCH SỬ ---
   const fetchMessages = async (pageNumber: number) => {
     try {
       if (pageNumber === 1) setLoading(true);
@@ -92,11 +166,9 @@ export default function ChatScreen() {
         if (pageNumber === 1) {
           setMessages(newMessages);
         } else {
-          // Khi tải thêm (cuộn lên trên), ghép tin nhắn cũ vào cuối mảng
           setMessages(prev => [...prev, ...newMessages]);
         }
 
-        // Kiểm tra xem còn trang nào nữa không
         setHasMore(pageNumber < apiResponse.data.totalPages);
         setPage(pageNumber);
       }
@@ -109,31 +181,49 @@ export default function ChatScreen() {
     }
   };
 
-  // Kích hoạt khi cuộn lên kịch trần để tải tin nhắn cũ hơn
   const loadMoreMessages = () => {
     if (!loadingMore && hasMore) {
       fetchMessages(page + 1);
     }
   };
 
-  // --- LOGIC GỬI TIN NHẮN (Sẽ nâng cấp lên WebSocket sau) ---
-  const handleSend = () => {
+  // --- LOGIC GỬI TIN NHẮN THẬT QUA REST API ---
+  const handleSend = async () => {
     if (!inputText.trim()) return;
     
-    // TODO: Gửi tin nhắn qua STOMP WebSocket tại đây
-    Alert.alert("Thông báo", "Cần tích hợp WebSocket để gửi tin nhắn thật!");
-    setInputText('');
+    const messageContent = inputText.trim();
+    setInputText(''); // Xóa khung nhập
+
+    try {
+      const response = await axiosClient.post(`/api/v1/chat-messages`, {
+        conversationId: conversationId,
+        content: messageContent,
+        messageType: 'TEXT', 
+        messageMedia: [], 
+        tempId: Date.now().toString(), 
+      });
+
+      const apiResponse = response.data;
+      // Chấp nhận mọi phản hồi có chứa data hoặc code thành công (200 / 201)
+      const savedMessage = apiResponse.data || apiResponse;
+      
+      if (savedMessage) {
+        setMessages((prevMessages) => [savedMessage, ...prevMessages]);
+      } else {
+        Alert.alert('Lỗi', apiResponse.message || 'Không thể gửi tin nhắn');
+      }
+    } catch (error: any) {
+      console.error('Lỗi khi gửi tin nhắn:', error);
+      Alert.alert('Lỗi kết nối', error.response?.data?.message || 'Không thể gửi tin nhắn đi.');
+    }
   };
 
-  // Hàm định dạng thời gian
   const formatTime = (timeString: string) => {
     if (!timeString) return '';
     return new Date(timeString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // --- RENDER TỪNG BONG BÓNG TIN NHẮN ---
   const renderMessage = ({ item }: { item: ChatMessageResponse }) => {
-    // Phân biệt tin nhắn: Nếu senderId bằng myUserId thì là tin của mình (màu xanh, bên phải)
     const isMe = item.senderId === myUserId; 
     
     return (
@@ -193,7 +283,6 @@ export default function ChatScreen() {
             keyExtractor={(item) => item.id}
             renderItem={renderMessage}
             contentContainerStyle={styles.listContent}
-            // Thuộc tính Inverted (lật ngược) để tin mới nhất nằm ở dưới cùng
             inverted={true} 
             onEndReached={loadMoreMessages}
             onEndReachedThreshold={0.5}
@@ -248,14 +337,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f4f4f6' },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   
-  // Header
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff', paddingVertical: 10, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: '#e5e5ea', zIndex: 10 },
   headerTitleContainer: { flex: 1, paddingLeft: 8 },
   headerName: { fontSize: 17, fontWeight: '600', color: '#000' },
   headerActions: { flexDirection: 'row' },
   iconButton: { padding: 8 },
 
-  // Message List
   listContent: { paddingHorizontal: 16, paddingBottom: 20 },
   messageWrapper: { flexDirection: 'row', marginBottom: 16, alignItems: 'flex-end' },
   messageWrapperMe: { justifyContent: 'flex-end' },
@@ -273,7 +360,6 @@ const styles = StyleSheet.create({
   timeLabelMe: { alignSelf: 'flex-end', marginRight: 4 },
   timeLabelThem: { alignSelf: 'flex-start', marginLeft: 4 },
 
-  // Input Area
   inputSection: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 8, paddingVertical: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e5e5ea' },
   attachButton: { padding: 8, paddingBottom: 10 },
   inputWrapper: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f2f2f7', borderRadius: 20, marginHorizontal: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#e5e5ea' },

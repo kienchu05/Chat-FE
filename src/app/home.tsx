@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { Client } from '@stomp/stompjs';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +15,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
+import 'text-encoding';
 import axiosClient from '../Api/services/axiosClient'; // Đảm bảo đường dẫn này đúng với dự án của bạn
 
 // --- KHAI BÁO TYPE ---
@@ -32,6 +34,7 @@ interface ConversationDetailResponse {
   lastMessageContent: string | null;
   lastMessageTime: string | null;
   createdAt: string;
+  isRead: boolean; // Trường kiểm tra đã đọc / chưa đọc
 }
 
 interface UserSearchResponse {
@@ -53,9 +56,67 @@ export default function HomeScreen() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResults, setSearchResults] = useState<UserSearchResponse[]>([]); 
 
+  // Sử dụng useFocusEffect để tự động tải lại dữ liệu mỗi khi quay về màn hình Home
+  useFocusEffect(
+    useCallback(() => {
+      fetchMyProfile();
+      fetchConversations();
+    }, [])
+  );
+
+  // --- THIẾT LẬP WEBSOCKET (STOMP) CHO MÀN HÌNH HOME ---
   useEffect(() => {
-    fetchMyProfile();
-    fetchConversations();
+    let client: Client | null = null;
+
+    const connectHomeWebSocket = async () => {
+      const token = await AsyncStorage.getItem('accessToken');
+      if (!token) return;
+
+      client = new Client({
+        brokerURL: 'ws://10.0.2.2:8080/ws',
+        connectHeaders: { Authorization: `Bearer ${token}` },
+        forceBinaryWSFrames: true,
+        appendMissingNULLonIncoming: true,
+      });
+
+      client.onConnect = () => {
+        console.log('Home: Đã kết nối STOMP để theo dõi danh sách');
+        
+        client!.subscribe('/user/queue/messages', (messageOutput) => {
+          if (messageOutput.body) {
+            const newMessage = JSON.parse(messageOutput.body);
+            
+            // KHI CÓ TIN NHẮN MỚI, CẬP NHẬT LẠI DANH SÁCH CHAT NGAY LẬP TỨC
+            setChatList((prevList) => {
+              const existingChatIndex = prevList.findIndex(chat => chat.id === newMessage.conversationId);
+              
+              let updatedList = [...prevList];
+
+              if (existingChatIndex !== -1) {
+                const chatToUpdate = updatedList.splice(existingChatIndex, 1)[0];
+                chatToUpdate.lastMessageContent = newMessage.content;
+                chatToUpdate.lastMessageTime = newMessage.createdAt;
+                chatToUpdate.isRead = false; // Có tin nhắn mới -> Đánh dấu là chưa đọc (in đậm)
+                
+                updatedList.unshift(chatToUpdate); 
+              } else {
+                fetchConversations();
+              }
+
+              return updatedList;
+            });
+          }
+        });
+      };
+
+      client.activate();
+    };
+
+    connectHomeWebSocket();
+
+    return () => {
+      if (client && client.active) client.deactivate();
+    };
   }, []);
 
   // 1. LẤY THÔNG TIN CỦA CHÍNH MÌNH
@@ -81,24 +142,15 @@ export default function HomeScreen() {
       });
 
       const apiResponse = response.data;
-    //   console.log('API Response for conversations:', apiResponse);
-    //   console.log('Raw data from API:', apiResponse.data.content[2]);
       if (apiResponse && apiResponse.code === 200) {
-        
-        // Dữ liệu gốc từ Backend
         const allChats = apiResponse.data.content || [];
-        
-        // --- THÊM BƯỚC LỌC Ở ĐÂY ---
-        // Chỉ giữ lại: Nhóm (GROUP) HOẶC Cuộc trò chuyện cá nhân đã có tin nhắn
         const activeChats = allChats.filter((chat: ConversationDetailResponse) => {
           if (chat.conversationType === 'GROUP') return true;
           const hasMessage = chat.lastMessageContent && chat.lastMessageContent.trim().length > 0;
           return hasMessage;
         });
 
-        // Đổ dữ liệu đã lọc vào State
         setChatList(activeChats);
-
       } else {
         Alert.alert('Lỗi', apiResponse.message || 'Không thể tải dữ liệu');
       }
@@ -111,13 +163,11 @@ export default function HomeScreen() {
     }
   };
 
-  // 3. XỬ LÝ KÉO XUỐNG ĐỂ TẢI LẠI
   const onRefresh = () => {
     setRefreshing(true);
     fetchConversations();
   };
 
-  // 4. XỬ LÝ TÌM KIẾM BẠN BÈ
   const handleSearchUsers = async () => {
     if (!searchQuery.trim()) {
       setIsSearching(false);
@@ -151,10 +201,8 @@ export default function HomeScreen() {
     }
   };
 
-  // 5. XỬ LÝ KHI BẤM VÀO NGƯỜI DÙNG TRONG TẬP KẾT QUẢ TÌM KIẾM
   const handleStartChat = async (targetUser: UserSearchResponse) => {
     try {
-      // Gọi API tạo hoặc lấy cuộc trò chuyện cũ
       const response = await axiosClient.post('/api/v1/conversations', {
         participantIds: [targetUser.userId],
         conversationType: 'PRIVATE' 
@@ -165,12 +213,10 @@ export default function HomeScreen() {
       if (apiResponse && apiResponse.code === 200) {
         const conversation = apiResponse.data;
         
-        // Dọn dẹp trạng thái tìm kiếm
         setSearchQuery('');
         setIsSearching(false);
         setSearchResults([]);
 
-        // Chuyển hướng sang màn hình chat
         router.push(`/chat?id=${conversation.id}&name=${encodeURIComponent(conversation.name)}`);
       } else {
         Alert.alert('Lỗi', apiResponse.message || 'Không thể tạo cuộc trò chuyện');
@@ -181,7 +227,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Hàm định dạng thời gian
   const formatTime = (timeString: string | null) => {
     if (!timeString) return '';
     const date = new Date(timeString);
@@ -236,7 +281,6 @@ export default function HomeScreen() {
 
         {/* KHU VỰC HIỂN THỊ DỮ LIỆU */}
         {isSearching ? (
-          /* TRẠNG THÁI 1: HIỂN THỊ KẾT QUẢ TÌM KIẾM */
           searchLoading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#0084ff" />
@@ -272,12 +316,10 @@ export default function HomeScreen() {
             />
           )
         ) : loading ? (
-          /* TRẠNG THÁI 2: ĐANG TẢI DANH SÁCH CHAT */
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#0084ff" />
           </View>
         ) : (
-          /* TRẠNG THÁI 3: HIỂN THỊ DANH SÁCH CHAT BÌNH THƯỜNG */
           <FlatList
             data={chatList}
             keyExtractor={(item) => item.id}
@@ -290,7 +332,16 @@ export default function HomeScreen() {
             renderItem={({ item }) => (
               <TouchableOpacity 
                 style={styles.chatItem} 
-                onPress={() => router.push(`/chat?id=${item.id}&name=${encodeURIComponent(item.name)}`)}
+                onPress={() => {
+                  // Đổi trạng thái isRead thành true ngay lập tức để mất chữ in đậm tại giao diện
+                  setChatList((prevList) =>
+                    prevList.map((chat) =>
+                      chat.id === item.id ? { ...chat, isRead: true } : chat
+                    )
+                  );
+                  // Chuyển hướng sang phòng chat
+                  router.push(`/chat?id=${item.id}&name=${encodeURIComponent(item.name)}`);
+                }}
               >
                 <Image 
                   source={{ uri: item.conversationAvatar || 'https://i.pravatar.cc/150?img=11' }} 
@@ -298,8 +349,16 @@ export default function HomeScreen() {
                 />
                 
                 <View style={styles.chatInfo}>
-                  <Text style={styles.chatName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.lastMessage} numberOfLines={1}>
+                  <Text style={[styles.chatName, !item.isRead && { fontWeight: 'bold' }]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text 
+                    style={[
+                      styles.lastMessage, 
+                      !item.isRead && { fontWeight: 'bold', color: '#000' }
+                    ]} 
+                    numberOfLines={1}
+                  >
                     {item.lastMessageContent || 'Chưa có tin nhắn'}
                   </Text>
                 </View>
@@ -322,7 +381,6 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { textAlign: 'center', marginTop: 20, color: '#888', fontSize: 16 },
   
-  // Header
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -343,7 +401,6 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
 
-  // Search
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -357,7 +414,6 @@ const styles = StyleSheet.create({
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 16, color: '#050505' },
 
-  // List
   listContainer: { paddingHorizontal: 16 },
   chatItem: {
     flexDirection: 'row',
