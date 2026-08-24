@@ -35,7 +35,7 @@ interface ConversationDetailResponse {
   lastMessageTime: string | null;
   createdAt: string;
   isRead: boolean;
-  isOnline?: boolean;    
+  isOnline?: boolean;     
   lastSeen?: string | null; 
 }
 
@@ -71,6 +71,7 @@ export default function HomeScreen() {
     let client: Client | null = null;
 
     const connectHomeWebSocket = async () => {
+      // 1. Lấy token từ AsyncStorage
       const token = await AsyncStorage.getItem('accessToken');
       if (!token) return;
 
@@ -84,27 +85,54 @@ export default function HomeScreen() {
       client.onConnect = () => {
         console.log('Home: Đã kết nối STOMP để theo dõi danh sách');
         
-        // 1. Lắng nghe trạng thái Online/Offline
-        client!.subscribe('/topic/user-status', (msg) => {
+        // 2. Lắng nghe thông báo trạng thái online/offline từ /topic/presence
+        client!.subscribe('/topic/presence', (msg) => {
           if (msg.body) {
-            const statusUpdate = JSON.parse(msg.body);
+            const presence = JSON.parse(msg.body); // { userId, isOnline, lastOnlineAt }
 
-            setChatList((prev) => prev.map(chat => {
-              // Kiểm tra xem phòng chat có người dùng vừa online/offline không
-              const hasUser = chat.participantInfo.some(p => p.userId === statusUpdate.userId);
-              return hasUser 
-                ? { ...chat, isOnline: statusUpdate.isOnline, lastSeen: statusUpdate.lastSeen } 
-                : chat;
-            }));
+            setChatList((prevConversations) =>
+              prevConversations.map((conv) => {
+                // Xử lý cho cuộc trò chuyện 1-1 (PRIVATE)
+                if (conv.conversationType === 'PRIVATE') {
+                  const isTargetUser = currentUserId
+                    ? conv.participantInfo?.some(
+                        (p) => p.userId === presence.userId && p.userId !== currentUserId
+                      )
+                    : conv.participantInfo?.some((p) => p.userId === presence.userId);
+
+                  if (isTargetUser) {
+                    return {
+                      ...conv,
+                      isOnline: presence.isOnline,
+                      // Nếu isOnline = true thì ẩn lastSeen, nếu false thì gán lastOnlineAt
+                      lastSeen: presence.isOnline ? null : presence.lastOnlineAt, 
+                    };
+                  }
+                  return conv;
+                } 
+                // Xử lý cho cuộc trò chuyện NHÓM (GROUP)
+                else {
+                  const hasParticipant = conv.participantInfo?.some(
+                    (p) => p.userId === presence.userId && p.userId !== currentUserId
+                  );
+                  
+                  if (!hasParticipant) return conv;
+
+                  return {
+                    ...conv,
+                    isOnline: presence.isOnline ? true : conv.isOnline,
+                  };
+                }
+              })
+            );
           }
         });
 
-        // 2. Lắng nghe tin nhắn mới
+        // 3. Lắng nghe tin nhắn mới
         client!.subscribe('/user/queue/messages', (messageOutput) => {
           if (messageOutput.body) {
             const newMessage = JSON.parse(messageOutput.body);
             
-            // KHI CÓ TIN NHẮN MỚI, CẬP NHẬT LẠI DANH SÁCH CHAT NGAY LẬP TỨC
             setChatList((prevList) => {
               const existingChatIndex = prevList.findIndex(chat => chat.id === newMessage.conversationId);
               let updatedList = [...prevList];
@@ -113,11 +141,11 @@ export default function HomeScreen() {
                 const chatToUpdate = updatedList.splice(existingChatIndex, 1)[0];
                 chatToUpdate.lastMessageContent = newMessage.content;
                 chatToUpdate.lastMessageTime = newMessage.createdAt;
-                chatToUpdate.isRead = false; // Có tin nhắn mới -> Đánh dấu là chưa đọc (in đậm)
+                chatToUpdate.isRead = false; 
                 
                 updatedList.unshift(chatToUpdate); 
               } else {
-                fetchConversations(); // Gọi API lấy lại danh sách nếu là phòng chat mới tinh
+                fetchConversations(); 
               }
 
               return updatedList;
@@ -134,7 +162,7 @@ export default function HomeScreen() {
     return () => {
       if (client && client.active) client.deactivate();
     };
-  }, []);
+  }, [currentUserId]);
 
   // 1. LẤY THÔNG TIN CỦA CHÍNH MÌNH
   const fetchMyProfile = async () => {
@@ -163,7 +191,6 @@ export default function HomeScreen() {
         const allChats = apiResponse.data.content || [];
         const activeChats = allChats.filter((chat: ConversationDetailResponse) => {
           if (chat.conversationType === 'GROUP') return true;
-          // Loại bỏ dòng lọc này nếu muốn phòng chat trống vẫn hiện (đã thống nhất hiện 'Chưa có tin nhắn')
           return true; 
         });
 
@@ -349,14 +376,24 @@ export default function HomeScreen() {
             renderItem={({ item }) => (
               <TouchableOpacity 
                 style={styles.chatItem} 
-                onPress={() => {
-                  // Đổi trạng thái isRead thành true ngay lập tức để mất chữ in đậm tại giao diện
+                onPress={async () => {
+                  // 1. Đổi trạng thái isRead thành true ngay lập tức để mất chữ in đậm tại UI
                   setChatList((prevList) =>
                     prevList.map((chat) =>
                       chat.id === item.id ? { ...chat, isRead: true } : chat
                     )
                   );
-                  // Chuyển hướng sang phòng chat
+
+                  // 2. GỌI API BÁO CHO BACKEND ĐÃ ĐỌC TIN NHẮN NÀY
+                  if (!item.isRead) {
+                    try {
+                      await axiosClient.put(`/api/v1/conversations/${item.id}/read`);
+                    } catch (error) {
+                      console.error('Lỗi khi đánh dấu đã đọc:', error);
+                    }
+                  }
+
+                  // 3. Chuyển hướng sang phòng chat
                   router.push(`/chat?id=${item.id}&name=${encodeURIComponent(item.name)}`);
                 }}
               >
