@@ -37,7 +37,7 @@ export default function LoginScreen({ navigation }: any) {
         username,
         password,
       });
-
+      console.log("Dữ liệu gửi lên server:", { username, password });
       console.log("4. API trả về thành công:", response.data);
 
       const token = response.data.accessToken;

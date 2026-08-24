@@ -3,7 +3,7 @@ import axios from 'axios';
 
 // Khởi tạo instance của Axios
 const axiosClient = axios.create({
-  baseURL: 'http://10.0.2.2:8080', // Thay đổi tùy theo IP máy ảo/máy thật của bạn
+  baseURL: 'http://10.0.2.2:8080',
   headers: {
     'Content-Type': 'application/json',
   },
@@ -14,33 +14,28 @@ const axiosClient = axios.create({
 axiosClient.interceptors.request.use(
   async (config) => {
     try {
-      // Lấy token từ bộ nhớ thiết bị
-      const token = await AsyncStorage.getItem('accessToken');
-      
-      // Nếu có token, đính kèm vào header Authorization
-      if (token && config.headers) {
-        config.headers.Authorization = `Bearer ${token}`;
+      // 1. Kiểm tra xem request này có phải là API công khai không (Đăng nhập / Đăng ký)
+      const isPublicAPI = config.url?.includes('/auth/login') || config.url?.includes('/auth/register');
+
+      // 2. Nếu KHÔNG phải API công khai thì mới tiến hành lấy token đính kèm
+      if (!isPublicAPI) {
+        const token = await AsyncStorage.getItem('accessToken');
+        if (token && config.headers) {
+          config.headers.Authorization = `Bearer ${token}`;
+        }
+      } else {
+        // Nếu là API login/register, đảm bảo xóa sạch header Authorization cũ (nếu có)
+        if (config.headers) {
+          delete config.headers.Authorization;
+        }
       }
     } catch (error) {
-      console.error('Lỗi khi lấy token từ AsyncStorage:', error);
+      console.error('Lỗi trong request interceptor:', error);
     }
     
     return config;
   },
   (error) => {
-    return Promise.reject(error);
-  }
-);
-
-// (Tùy chọn) Interceptor xử lý response lỗi chung
-axiosClient.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    // Nếu API trả về 401 ở bất kỳ đâu, có thể do token hết hạn -> xử lý đăng xuất tại đây
-    if (error.response?.status === 401) {
-      console.log('Token không hợp lệ hoặc đã hết hạn!');
-      // router.replace('/login'); // Tương lai có thể thêm logic tự động đẩy về trang đăng nhập
-    }
     return Promise.reject(error);
   }
 );

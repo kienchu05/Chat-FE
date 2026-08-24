@@ -16,7 +16,7 @@ import {
   View
 } from 'react-native';
 import 'text-encoding';
-import axiosClient from '../Api/services/axiosClient'; // Đảm bảo đường dẫn này đúng với dự án của bạn
+import axiosClient from '../Api/services/axiosClient';
 
 // --- KHAI BÁO TYPE ---
 interface ParticipantResponse {
@@ -34,7 +34,9 @@ interface ConversationDetailResponse {
   lastMessageContent: string | null;
   lastMessageTime: string | null;
   createdAt: string;
-  isRead: boolean; // Trường kiểm tra đã đọc / chưa đọc
+  isRead: boolean;
+  isOnline?: boolean;    
+  lastSeen?: string | null; 
 }
 
 interface UserSearchResponse {
@@ -82,6 +84,22 @@ export default function HomeScreen() {
       client.onConnect = () => {
         console.log('Home: Đã kết nối STOMP để theo dõi danh sách');
         
+        // 1. Lắng nghe trạng thái Online/Offline
+        client!.subscribe('/topic/user-status', (msg) => {
+          if (msg.body) {
+            const statusUpdate = JSON.parse(msg.body);
+
+            setChatList((prev) => prev.map(chat => {
+              // Kiểm tra xem phòng chat có người dùng vừa online/offline không
+              const hasUser = chat.participantInfo.some(p => p.userId === statusUpdate.userId);
+              return hasUser 
+                ? { ...chat, isOnline: statusUpdate.isOnline, lastSeen: statusUpdate.lastSeen } 
+                : chat;
+            }));
+          }
+        });
+
+        // 2. Lắng nghe tin nhắn mới
         client!.subscribe('/user/queue/messages', (messageOutput) => {
           if (messageOutput.body) {
             const newMessage = JSON.parse(messageOutput.body);
@@ -89,7 +107,6 @@ export default function HomeScreen() {
             // KHI CÓ TIN NHẮN MỚI, CẬP NHẬT LẠI DANH SÁCH CHAT NGAY LẬP TỨC
             setChatList((prevList) => {
               const existingChatIndex = prevList.findIndex(chat => chat.id === newMessage.conversationId);
-              
               let updatedList = [...prevList];
 
               if (existingChatIndex !== -1) {
@@ -100,7 +117,7 @@ export default function HomeScreen() {
                 
                 updatedList.unshift(chatToUpdate); 
               } else {
-                fetchConversations();
+                fetchConversations(); // Gọi API lấy lại danh sách nếu là phòng chat mới tinh
               }
 
               return updatedList;
@@ -146,8 +163,8 @@ export default function HomeScreen() {
         const allChats = apiResponse.data.content || [];
         const activeChats = allChats.filter((chat: ConversationDetailResponse) => {
           if (chat.conversationType === 'GROUP') return true;
-          const hasMessage = chat.lastMessageContent && chat.lastMessageContent.trim().length > 0;
-          return hasMessage;
+          // Loại bỏ dòng lọc này nếu muốn phòng chat trống vẫn hiện (đã thống nhất hiện 'Chưa có tin nhắn')
+          return true; 
         });
 
         setChatList(activeChats);
@@ -343,15 +360,22 @@ export default function HomeScreen() {
                   router.push(`/chat?id=${item.id}&name=${encodeURIComponent(item.name)}`);
                 }}
               >
-                <Image 
-                  source={{ uri: item.conversationAvatar || 'https://i.pravatar.cc/150?img=11' }} 
-                  style={styles.avatar} 
-                />
+                {/* BỌC AVATAR BẰNG VIEW ĐỂ HIỂN THỊ CHẤM XANH */}
+                <View style={styles.avatarContainer}>
+                  <Image 
+                    source={{ uri: item.conversationAvatar || 'https://i.pravatar.cc/150?img=11' }} 
+                    style={styles.avatar} 
+                  />
+                  {/* Nếu isOnline = true thì hiển thị chấm màu xanh lá */}
+                  {item.isOnline && <View style={styles.onlineBadge} />}
+                </View>
                 
                 <View style={styles.chatInfo}>
                   <Text style={[styles.chatName, !item.isRead && { fontWeight: 'bold' }]} numberOfLines={1}>
                     {item.name}
                   </Text>
+                  
+                  {/* HIỂN THỊ TIN NHẮN HOẶC "Chưa có tin nhắn" */}
                   <Text 
                     style={[
                       styles.lastMessage, 
@@ -359,7 +383,9 @@ export default function HomeScreen() {
                     ]} 
                     numberOfLines={1}
                   >
-                    {item.lastMessageContent || 'Chưa có tin nhắn'}
+                    {item.lastMessageContent && item.lastMessageContent.trim().length > 0 
+                      ? item.lastMessageContent 
+                      : 'Chưa có tin nhắn'}
                   </Text>
                 </View>
 
@@ -420,7 +446,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
   },
-  avatar: { width: 56, height: 56, borderRadius: 28, marginRight: 12, backgroundColor: '#aeb4b7' },
+  
+  // Style cho cụm Avatar và chấm xanh Online
+  avatarContainer: { 
+    position: 'relative', 
+    marginRight: 12 
+  },
+  avatar: { 
+    width: 56, 
+    height: 56, 
+    borderRadius: 28, 
+    backgroundColor: '#aeb4b7' 
+  },
+  onlineBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#31a24c',
+    borderWidth: 2,
+    borderColor: '#fff',
+    zIndex: 1,
+  },
+  
   chatInfo: { flex: 1, justifyContent: 'center' },
   chatName: { fontSize: 17, fontWeight: '500', color: '#050505', marginBottom: 4 },
   lastMessage: { fontSize: 14, color: '#65676b' },

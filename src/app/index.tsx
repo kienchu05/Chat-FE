@@ -32,7 +32,7 @@ export default function LoginScreen({ navigation }: any) {
         email,
         password,
       });
-
+      console.log("Dữ liệu gửi lên server:", { email, password });
       const token = response.data.data.accessToken;
       console.log('Token nhận được từ API:', token);
 

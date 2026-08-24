@@ -18,7 +18,7 @@ import {
   View
 } from 'react-native';
 import 'text-encoding';
-import axiosClient from '../Api/services/axiosClient'; // Đảm bảo đường dẫn này đúng với dự án của bạn
+import axiosClient from '../Api/services/axiosClient';
 
 // --- ĐỊNH NGHĨA TYPE TỪ SPRING BOOT ---
 interface MessageMediaResponse {
@@ -192,7 +192,7 @@ export default function ChatScreen() {
     if (!inputText.trim()) return;
     
     const messageContent = inputText.trim();
-    setInputText(''); // Xóa khung nhập
+    setInputText(''); // Xóa khung nhập ngay lập tức để tạo cảm giác mượt
 
     try {
       const response = await axiosClient.post(`/api/v1/chat-messages`, {
@@ -204,10 +204,11 @@ export default function ChatScreen() {
       });
 
       const apiResponse = response.data;
-      // Chấp nhận mọi phản hồi có chứa data hoặc code thành công (200 / 201)
+      
+      // Chấp nhận mọi dữ liệu trả về miễn là có data
       const savedMessage = apiResponse.data || apiResponse;
       
-      if (savedMessage) {
+      if (savedMessage && (apiResponse.code === 200 || savedMessage.id)) {
         setMessages((prevMessages) => [savedMessage, ...prevMessages]);
       } else {
         Alert.alert('Lỗi', apiResponse.message || 'Không thể gửi tin nhắn');
@@ -218,11 +219,42 @@ export default function ChatScreen() {
     }
   };
 
+  // --- LOGIC XÓA TIN NHẮN ---
+  const handleDeleteMessage = async (messageId: string) => {
+    try {
+      // Đảm bảo đường dẫn này khớp với backend của bạn
+      const response = await axiosClient.delete(`/api/v1/messages/${messageId}`);
+      if (response.data.code === 200 || response.status === 200) {
+        // Lọc bỏ tin nhắn bị xóa khỏi giao diện hiện tại
+        setMessages((prevMessages) => prevMessages.filter((msg) => msg.id !== messageId));
+      }
+    } catch (error) {
+      console.error("Lỗi xóa tin nhắn:", error);
+      Alert.alert("Lỗi", "Không thể xóa tin nhắn lúc này.");
+    }
+  };
+
+  const confirmDelete = (messageId: string) => {
+    Alert.alert(
+      "Xóa tin nhắn",
+      "Bạn có chắc chắn muốn xóa tin nhắn này không?",
+      [
+        { text: "Hủy", style: "cancel" },
+        { 
+          text: "Xóa", 
+          style: "destructive", 
+          onPress: () => handleDeleteMessage(messageId) 
+        }
+      ]
+    );
+  };
+
   const formatTime = (timeString: string) => {
     if (!timeString) return '';
     return new Date(timeString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // --- RENDER BONG BÓNG TIN NHẮN ---
   const renderMessage = ({ item }: { item: ChatMessageResponse }) => {
     const isMe = item.senderId === myUserId; 
     
@@ -235,11 +267,20 @@ export default function ChatScreen() {
           />
         )}
         <View>
-          <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
-            <Text style={[styles.messageText, isMe ? styles.textMe : styles.textThem]}>
-              {item.content}
-            </Text>
-          </View>
+          {/* Nhấn giữ (long press) vào tin nhắn của MÌNH để hiện menu xóa */}
+          <TouchableOpacity 
+            onLongPress={() => {
+              if (isMe) confirmDelete(item.id);
+            }}
+            activeOpacity={0.8}
+            delayLongPress={300}
+          >
+            <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
+              <Text style={[styles.messageText, isMe ? styles.textMe : styles.textThem]}>
+                {item.content}
+              </Text>
+            </View>
+          </TouchableOpacity>
           <Text style={[styles.timeLabel, isMe ? styles.timeLabelMe : styles.timeLabelThem]}>
             {formatTime(item.createdAt)}
           </Text>
