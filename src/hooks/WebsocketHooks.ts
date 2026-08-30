@@ -68,9 +68,7 @@ export const useWebSocket = (
         if (!mounted || disconnectingRef.current) {
           return;
         }
-
         console.log("WebSocket: Connected");
-
         setConnected(true);
         // SUBSCRIBE MESSAGE
         messageSubRef.current = client.subscribe(
@@ -81,7 +79,7 @@ export const useWebSocket = (
             }
             try {
               const data = JSON.parse(message.body);
-              onMessageRef.current?.(data);
+              onMessageRef.current?.(data); //onMessage = handleNewMessage
             } catch (error) {
               console.error("WebSocket: Lỗi parse message:", error);
             }

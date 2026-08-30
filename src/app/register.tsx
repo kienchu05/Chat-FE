@@ -27,7 +27,6 @@ export default function RegisterScreen() {
 
     try {
       setLoading(true);
-      // Gọi API đăng ký tới Spring Boot (Đảm bảo endpoint này khớp với backend của bạn)
       await axiosClient.post("/api/v1/users", {
         username,
         email,
@@ -43,6 +42,7 @@ export default function RegisterScreen() {
       );
     } catch (error: any) {
       console.error("Lỗi đăng ký:", error);
+      console.log("Chi tiết lỗi:", error.response?.data || error);
       Alert.alert(
         "Đăng ký thất bại",
         error.response?.data?.message || "Có lỗi xảy ra, vui lòng thử lại.",
