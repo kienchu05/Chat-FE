@@ -42,7 +42,6 @@ export default function RegisterScreen() {
       );
     } catch (error: any) {
       console.error("Lỗi đăng ký:", error);
-      console.log("Chi tiết lỗi:", error.response?.data || error);
       Alert.alert(
         "Đăng ký thất bại",
         error.response?.data?.message || "Có lỗi xảy ra, vui lòng thử lại.",

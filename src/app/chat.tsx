@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Client } from "@stomp/stompjs";
-import * as ImagePicker from "expo-image-picker"; // THÊM THƯ VIỆN NÀY
+import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import {
@@ -325,6 +325,16 @@ export default function ChatScreen() {
       minute: "2-digit",
     });
   };
+  const openContactDetails = () => {
+    router.push({
+      pathname: "/contact-detail",
+      params: {
+        username: conversationName,
+        conversationId: conversationId,
+        avatar: messages[0]?.conversationAvatar || "",
+      },
+    });
+  };
 
   // --- RENDER BONG BÓNG TIN NHẮN ---
   const renderMessage = ({ item }: { item: ChatMessageResponse }) => {
@@ -343,10 +353,11 @@ export default function ChatScreen() {
       >
         {!isMe && (
           <Image
-            source={{
-              uri:
-                item.conversationAvatar || "https://i.pravatar.cc/150?img=11",
-            }}
+            source={
+              item.conversationAvatar
+                ? { uri: item.conversationAvatar }
+                : require("../assets/icon.png.webp")
+            }
             style={styles.avatarSmall}
           />
         )}
@@ -426,9 +437,9 @@ export default function ChatScreen() {
             <Ionicons name="chevron-back" size={28} color="#0084ff" />
           </TouchableOpacity>
           <View style={styles.headerTitleContainer}>
-            <Text style={styles.headerName}>
-              {conversationName || "Đoạn chat"}
-            </Text>
+            <TouchableOpacity onPress={openContactDetails}>
+              <Text style={styles.headerName}>{conversationName}</Text>
+            </TouchableOpacity>
           </View>
           <View style={styles.headerActions}>
             <TouchableOpacity style={styles.iconButton}>

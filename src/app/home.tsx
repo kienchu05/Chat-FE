@@ -521,11 +521,11 @@ export default function HomeScreen() {
 
                 <View style={styles.avatarContainer}>
                   <Image
-                    source={{
-                      uri:
-                        item.conversationAvatar ||
-                        "https://i.pravatar.cc/150?img=11",
-                    }}
+                    source={
+                      item.conversationAvatar
+                        ? { uri: item.conversationAvatar }
+                        : require("../assets/icon.png.webp")
+                    }
                     style={styles.avatar}
                   />
 
