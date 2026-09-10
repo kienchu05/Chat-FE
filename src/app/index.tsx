@@ -1,3 +1,4 @@
+import { initializeE2EE } from "@/crypto/e2ee";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { jwtDecode } from "jwt-decode";
@@ -44,6 +45,7 @@ export default function LoginScreen({ navigation }: any) {
       if (token) {
         // 1. Lưu accessToken
         await AsyncStorage.setItem("accessToken", token);
+        await initializeE2EE();
         // 2. Đọc thông tin trong JWT
         const decoded = jwtDecode<MyJwtPayload>(token);
         console.log("JWT:", decoded);

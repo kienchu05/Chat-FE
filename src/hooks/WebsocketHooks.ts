@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Client, IMessage, StompSubscription } from "@stomp/stompjs";
+import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 
 interface PresenceEvent {
@@ -48,7 +49,7 @@ export const useWebSocket = (
       disconnectingRef.current = false;
 
       const client = new Client({
-        brokerURL: "ws://10.0.2.2:8080/ws",
+        brokerURL: "wss://10.0.2.2:8443/ws",
 
         connectHeaders: {
           Authorization: `Bearer ${token}`,
@@ -70,7 +71,7 @@ export const useWebSocket = (
         }
         console.log("WebSocket: Connected");
         setConnected(true);
-        // SUBSCRIBE MESSAGE
+        // Nhận tin nhắn từ server
         messageSubRef.current = client.subscribe(
           "/user/queue/messages",
           (message: IMessage) => {
@@ -85,7 +86,7 @@ export const useWebSocket = (
             }
           },
         );
-        // SUBSCRIBE PRESENCE
+        // Nhận presence từ server
         presenceSubRef.current = client.subscribe(
           "/topic/presence",
           (message: IMessage) => {
@@ -102,7 +103,23 @@ export const useWebSocket = (
             }
           },
         );
+
+        //Nhận trạng thái tài khoản
+        client.subscribe("/user/queue/account-status", async (message) => {
+          const event = JSON.parse(message.body);
+          console.log("ACCOUNT STATUS:", event);
+          if (event.type === "ACCOUNT_LOCKED") {
+            console.log("Account locked");
+            // 1. Xóa thông tin đăng nhập
+            await AsyncStorage.multiRemove(["accessToken", "myUserId"]);
+            // 2. Ngắt WebSocket
+            await client.deactivate();
+            // 3. Về Login
+            router.replace("/");
+          }
+        });
       };
+
       // WEBSOCKET CLOSE
       client.onWebSocketClose = () => {
         console.log("WebSocket: Closed");
@@ -141,9 +158,7 @@ export const useWebSocket = (
     // CLEANUP
     return () => {
       console.log("WebSocket Hook: cleanup");
-      // Đánh dấu trước khi deactivate
-      // để onWebSocketError biết đây là
-      // disconnect chủ động
+      // Đánh dấu trước khi deactivate để onWebSocketError biết đây là disconnect chủ động
       disconnectingRef.current = true;
 
       mounted = false;

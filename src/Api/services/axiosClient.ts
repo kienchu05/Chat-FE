@@ -3,7 +3,7 @@ import axios from "axios";
 
 // Khởi tạo instance của Axios
 const axiosClient = axios.create({
-  baseURL: "http://10.0.2.2:8080",
+  baseURL: "https://10.0.2.2:8443",
   headers: {
     "Content-Type": "application/json",
   },

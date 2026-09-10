@@ -86,7 +86,7 @@ export default function ChatScreen() {
         if (!token) return;
 
         client = new Client({
-          brokerURL: "ws://10.0.2.2:8080/ws",
+          brokerURL: "wss://10.0.2.2:8443/ws",
           connectHeaders: { Authorization: `Bearer ${token}` },
           forceBinaryWSFrames: true,
           appendMissingNULLonIncoming: true,
@@ -193,6 +193,7 @@ export default function ChatScreen() {
       });
 
       const savedMessage = response.data.data || response.data;
+      console.log("Tin nhắn đã gửi:", savedMessage);
       if (savedMessage?.id) {
         setMessages((prev) => [savedMessage, ...prev]);
       }
